@@ -1,4 +1,4 @@
-﻿#Requires -Version 5.1
+#Requires -Version 5.1
 
 <#
 .SYNOPSIS
@@ -39,31 +39,135 @@ function Format-SafeValue {
 
 function Clear-TempFiles {
     param([bool]$DeepClean = $false)
+    
     $freedSpace = 0
     $script:MaintenanceLog += "=== Limpeza de Temporários ==="
+    
     try {
+        # Temp do usuário
         $tempPath = $env:TEMP
-        $before = (Get-ChildItem $tempPath -Recurse -EA SilentlyContinue | Measure-Object -Property Length -Sum).Sum
-        Get-ChildItem $tempPath -Recurse -EA SilentlyContinue | Remove-Item -Force -Recurse -EA SilentlyContinue
-        $after = (Get-ChildItem $tempPath -Recurse -EA SilentlyContinue | Measure-Object -Property Length -Sum).Sum
-        $freed = if ($before -and $after) { [math]::Round(($before - $after) / 1MB, 2) } else { 0 }
-        $freedSpace += $freed
-        $script:MaintenanceLog += "✓ Temp usuário: $freed MB"
-        
-        if ($IsAdmin) {
-            $winTemp = "C:\Windows\Temp"
-            $before = (Get-ChildItem $winTemp -Recurse -EA SilentlyContinue | Measure-Object -Property Length -Sum).Sum
-            Get-ChildItem $winTemp -Recurse -EA SilentlyContinue | Remove-Item -Force -Recurse -EA SilentlyContinue
-            $after = (Get-ChildItem $winTemp -Recurse -EA SilentlyContinue | Measure-Object -Property Length -Sum).Sum
-            $freed = if ($before -and $after) { [math]::Round(($before - $after) / 1MB, 2) } else { 0 }
-            $freedSpace += $freed
-            $script:MaintenanceLog += "✓ Windows Temp: $freed MB"
+        if (Test-Path $tempPath) {
+            try {
+                $before = (Get-ChildItem $tempPath -Recurse -Force -EA SilentlyContinue | Measure-Object -Property Length -Sum -EA SilentlyContinue).Sum
+                if ($null -eq $before) { $before = 0 }
+                
+                Get-ChildItem $tempPath -Recurse -Force -EA SilentlyContinue | ForEach-Object {
+                    try {
+                        Remove-Item $_.FullName -Force -Recurse -EA SilentlyContinue
+                    } catch { }
+                }
+                
+                $after = (Get-ChildItem $tempPath -Recurse -Force -EA SilentlyContinue | Measure-Object -Property Length -Sum -EA SilentlyContinue).Sum
+                if ($null -eq $after) { $after = 0 }
+                
+                $freed = if ($before -gt 0) { [math]::Round(($before - $after) / 1MB, 2) } else { 0 }
+                $freedSpace += $freed
+                $script:MaintenanceLog += "✓ Temp usuário: $freed MB"
+            } catch {
+                $script:MaintenanceLog += "⚠ Temp usuário: erro parcial"
+            }
         }
         
-        $script:MaintenanceLog += "=== Total: $freedSpace MB ==="
+        # Windows Temp (só admin)
+        if ($IsAdmin) {
+            $winTemp = "C:\Windows\Temp"
+            if (Test-Path $winTemp) {
+                try {
+                    $before = (Get-ChildItem $winTemp -Recurse -Force -EA SilentlyContinue | Measure-Object -Property Length -Sum -EA SilentlyContinue).Sum
+                    if ($null -eq $before) { $before = 0 }
+                    
+                    Get-ChildItem $winTemp -Recurse -Force -EA SilentlyContinue | ForEach-Object {
+                        try {
+                            Remove-Item $_.FullName -Force -Recurse -EA SilentlyContinue
+                        } catch { }
+                    }
+                    
+                    $after = (Get-ChildItem $winTemp -Recurse -Force -EA SilentlyContinue | Measure-Object -Property Length -Sum -EA SilentlyContinue).Sum
+                    if ($null -eq $after) { $after = 0 }
+                    
+                    $freed = if ($before -gt 0) { [math]::Round(($before - $after) / 1MB, 2) } else { 0 }
+                    $freedSpace += $freed
+                    $script:MaintenanceLog += "✓ Windows Temp: $freed MB"
+                } catch {
+                    $script:MaintenanceLog += "⚠ Windows Temp: erro parcial"
+                }
+            }
+        }
+        
+        # Prefetch (deep clean + admin)
+        if ($IsAdmin -and $DeepClean) {
+            $prefetch = "C:\Windows\Prefetch"
+            if (Test-Path $prefetch) {
+                try {
+                    $before = (Get-ChildItem $prefetch -Filter "*.pf" -EA SilentlyContinue | Measure-Object -Property Length -Sum -EA SilentlyContinue).Sum
+                    if ($null -eq $before) { $before = 0 }
+                    
+                    Get-ChildItem $prefetch -Filter "*.pf" -EA SilentlyContinue | ForEach-Object {
+                        try {
+                            Remove-Item $_.FullName -Force -EA SilentlyContinue
+                        } catch { }
+                    }
+                    
+                    $after = (Get-ChildItem $prefetch -Filter "*.pf" -EA SilentlyContinue | Measure-Object -Property Length -Sum -EA SilentlyContinue).Sum
+                    if ($null -eq $after) { $after = 0 }
+                    
+                    $freed = if ($before -gt 0) { [math]::Round(($before - $after) / 1MB, 2) } else { 0 }
+                    $freedSpace += $freed
+                    $script:MaintenanceLog += "✓ Prefetch: $freed MB"
+                } catch {
+                    $script:MaintenanceLog += "⚠ Prefetch: erro"
+                }
+            }
+        }
+        
+        # Cache de navegadores (deep clean)
+        if ($DeepClean) {
+            # Chrome
+            $chromeCache = "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Cache"
+            if (Test-Path $chromeCache) {
+                try {
+                    $before = (Get-ChildItem $chromeCache -Recurse -EA SilentlyContinue | Measure-Object -Property Length -Sum -EA SilentlyContinue).Sum
+                    if ($null -eq $before) { $before = 0 }
+                    
+                    Get-ChildItem $chromeCache -Recurse -EA SilentlyContinue | Remove-Item -Force -Recurse -EA SilentlyContinue
+                    
+                    $after = (Get-ChildItem $chromeCache -Recurse -EA SilentlyContinue | Measure-Object -Property Length -Sum -EA SilentlyContinue).Sum
+                    if ($null -eq $after) { $after = 0 }
+                    
+                    $freed = if ($before -gt 0) { [math]::Round(($before - $after) / 1MB, 2) } else { 0 }
+                    $freedSpace += $freed
+                    $script:MaintenanceLog += "✓ Chrome Cache: $freed MB"
+                } catch {
+                    $script:MaintenanceLog += "⚠ Chrome Cache: não acessível"
+                }
+            }
+            
+            # Edge
+            $edgeCache = "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\Cache"
+            if (Test-Path $edgeCache) {
+                try {
+                    $before = (Get-ChildItem $edgeCache -Recurse -EA SilentlyContinue | Measure-Object -Property Length -Sum -EA SilentlyContinue).Sum
+                    if ($null -eq $before) { $before = 0 }
+                    
+                    Get-ChildItem $edgeCache -Recurse -EA SilentlyContinue | Remove-Item -Force -Recurse -EA SilentlyContinue
+                    
+                    $after = (Get-ChildItem $edgeCache -Recurse -EA SilentlyContinue | Measure-Object -Property Length -Sum -EA SilentlyContinue).Sum
+                    if ($null -eq $after) { $after = 0 }
+                    
+                    $freed = if ($before -gt 0) { [math]::Round(($before - $after) / 1MB, 2) } else { 0 }
+                    $freedSpace += $freed
+                    $script:MaintenanceLog += "✓ Edge Cache: $freed MB"
+                } catch {
+                    $script:MaintenanceLog += "⚠ Edge Cache: não acessível"
+                }
+            }
+        }
+        
+        $script:MaintenanceLog += "=== Total Liberado: $freedSpace MB ==="
         return $freedSpace
+        
     } catch {
-        $script:MaintenanceLog += "✗ Erro: $($_.Exception.Message)"
+        $script:MaintenanceLog += "✗ Erro geral: $($_.Exception.Message)"
         return $freedSpace
     }
 }
@@ -71,11 +175,27 @@ function Clear-TempFiles {
 function Clear-RecycleBin {
     try {
         $script:MaintenanceLog += "=== Lixeira ==="
-        Clear-RecycleBin -Force -EA SilentlyContinue
-        $script:MaintenanceLog += "✓ Lixeira esvaziada"
-        return $true
+        
+        # Método 1: PowerShell nativo
+        try {
+            Clear-RecycleBin -Force -EA Stop
+            $script:MaintenanceLog += "✓ Lixeira esvaziada"
+            return $true
+        } catch {
+            # Método 2: Shell COM
+            try {
+                $shell = New-Object -ComObject Shell.Application
+                $recycleBin = $shell.Namespace(0xA)
+                $recycleBin.Items() | ForEach-Object { Remove-Item $_.Path -Force -Recurse -EA SilentlyContinue }
+                $script:MaintenanceLog += "✓ Lixeira esvaziada (método alternativo)"
+                return $true
+            } catch {
+                $script:MaintenanceLog += "⚠ Lixeira: não foi possível esvaziar"
+                return $false
+            }
+        }
     } catch {
-        $script:MaintenanceLog += "✗ Erro lixeira"
+        $script:MaintenanceLog += "✗ Erro lixeira: $($_.Exception.Message)"
         return $false
     }
 }
@@ -83,11 +203,30 @@ function Clear-RecycleBin {
 function Clear-DNSCache {
     try {
         $script:MaintenanceLog += "=== DNS Cache ==="
-        Clear-DnsClientCache -EA SilentlyContinue
-        $script:MaintenanceLog += "✓ DNS limpo"
-        return $true
+        
+        # Método 1: Clear-DnsClientCache
+        try {
+            Clear-DnsClientCache -EA Stop
+            $script:MaintenanceLog += "✓ DNS Cache limpo"
+            return $true
+        } catch {
+            # Método 2: ipconfig /flushdns
+            try {
+                $result = & ipconfig /flushdns 2>&1
+                if ($result -match "Successfully|êxito") {
+                    $script:MaintenanceLog += "✓ DNS Cache limpo (ipconfig)"
+                    return $true
+                } else {
+                    $script:MaintenanceLog += "⚠ DNS Cache: comando executado mas status incerto"
+                    return $true
+                }
+            } catch {
+                $script:MaintenanceLog += "✗ DNS Cache: falhou"
+                return $false
+            }
+        }
     } catch {
-        $script:MaintenanceLog += "✗ Erro DNS"
+        $script:MaintenanceLog += "✗ Erro DNS: $($_.Exception.Message)"
         return $false
     }
 }
@@ -294,16 +433,34 @@ Write-Host "[17/21] USB..." -ForegroundColor Yellow
 $USBDevices = Get-SafeData "USBDevices" { Get-PnpDevice -Class USB | Where-Object {$_.Status -eq "OK"} } @()
 
 Write-Host "[18/21] Conectividade..." -ForegroundColor Yellow
-$PingGoogle = Get-SafeData "PingGoogle" { Test-Connection -ComputerName 8.8.8.8 -Count 2 -Quiet } $false
-$PingDNS = Get-SafeData "PingDNS" { Test-Connection -ComputerName dns.google -Count 2 -Quiet } $false
+$PingGoogle = Get-SafeData "PingGoogle" { 
+    $result = Test-Connection -ComputerName 8.8.8.8 -Count 2 -ErrorAction SilentlyContinue
+    if ($result) { $true } else { $false }
+} $false
+
+$PingDNS = Get-SafeData "PingDNS" { 
+    $result = Test-Connection -ComputerName dns.google -Count 2 -ErrorAction SilentlyContinue
+    if ($result) { $true } else { $false }
+} $false
+
 $InternetSpeed = Get-SafeData "InternetSpeed" {
     try {
-        $TestFile = "http://speedtest.ftp.otenet.gr/files/test1Mb.db"
+        Write-Host "   Testando velocidade..." -ForegroundColor Gray
+        $TestFile = "http://speedtest.ftp.otenet.gr/files/test10Mb.db"
         $Start = Get-Date
-        (New-Object System.Net.WebClient).DownloadData($TestFile) | Out-Null
+        $WebClient = New-Object System.Net.WebClient
+        $WebClient.DownloadData($TestFile) | Out-Null
+        $WebClient.Dispose()
         $Time = ((Get-Date) - $Start).TotalSeconds
-        [math]::Round((1 / $Time) * 8, 2)
-    } catch { 0 }
+        if ($Time -gt 0) {
+            $Speed = [math]::Round((10 / $Time) * 8, 2)
+            Write-Host "   ✓ $Speed Mbps" -ForegroundColor Green
+            $Speed
+        } else { 0 }
+    } catch { 
+        Write-Host "   ⚠ Não foi possível testar" -ForegroundColor Yellow
+        0 
+    }
 } 0
 
 Write-Host "[19/21] Temperatura..." -ForegroundColor Yellow
@@ -558,15 +715,24 @@ if ($GPU.Count -gt 0) {
 $HTML += @"
             </div>
 
-            <div class="info-card">
+	<div class="info-card">
                 <h3>🌐 Rede</h3>
 "@
 
 if ($NetworkAdapters.Count -gt 0) {
     foreach ($Adapter in ($NetworkAdapters | Select-Object -First 2)) {
+        # Buscar IP do adaptador
+        $AdapterIP = "N/A"
+        $AdapterConfig = $IPConfig | Where-Object { $_.InterfaceAlias -eq $Adapter.Name }
+        if ($AdapterConfig -and $AdapterConfig.IPv4Address) {
+            $AdapterIP = $AdapterConfig.IPv4Address.IPAddress
+        }
+        
         $HTML += @"
                 <div class="info-row"><span class="info-label">Adaptador:</span><span class="info-value">$(Format-SafeValue $Adapter.InterfaceDescription)</span></div>
                 <div class="info-row"><span class="info-label">Status:</span><span class="info-value"><span class="badge badge-success">$(Format-SafeValue $Adapter.Status)</span></span></div>
+                <div class="info-row"><span class="info-label">IP (IPv4):</span><span class="info-value"><strong>$AdapterIP</strong></span></div>
+                <div class="info-row"><span class="info-label">MAC Address:</span><span class="info-value"><strong>$(Format-SafeValue $Adapter.MacAddress)</strong></span></div>
                 <div class="info-row"><span class="info-label">Velocidade:</span><span class="info-value">$(Format-SafeValue $Adapter.LinkSpeed)</span></div>
 "@
     }
